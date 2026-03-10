@@ -5,13 +5,12 @@
 # What are you looking for ?
 
 properties() { '
-kernel.string=E404R Kernel by Project 113
+kernel.string=\\ E404R Kernel by Project 113 \\
 do.modules=0
 do.systemless=1
 '; }
 
 devicecheck() {
-  [[ "$(file_getprop anykernel.sh devicecheck)" == 1 ]] || return 1;
   local device devicename match product testname vendordevice vendorproduct;
   device=$(getprop ro.product.device 2>/dev/null);
   product=$(getprop ro.build.product 2>/dev/null);
@@ -37,21 +36,21 @@ select_option() {
 
   SELECT_RESULT=""
   while true; do
-    ev=$(getevent -lt 2>/dev/null | grep -m1 "KEY_VOLUME")
-    case "$ev" in
-      *KEY_VOLUMEUP*)
+    key_event=$(getevent -qlc 1)
+    case "$key_event" in
+      *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*)
         ui_print "  Selected : $2" " "
         SELECT_RESULT="$2"
         break
         ;;
-      *KEY_VOLUMEDOWN*)
+      *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*)
         ui_print "  Selected : $3" " "
         SELECT_RESULT="$3"
         break
         ;;
     esac
+    sleep 0.1
   done
-  sleep 0.5
   echo "$SELECT_RESULT"
 }
 
@@ -62,30 +61,19 @@ configure_manual() {
   case "$rom_sel" in
     *AOSP*|*CLO*)
       [ "$oplus" != "1" ] && rom="rom_aosp"
-      dtbo="dtbo_def"
+      if [[ "$devicename" == "pipa" ]]; then
+        dtbo="dtbo_def_pipa"
+      else
+        dtbo="dtbo_def"
+      fi
       ;;
     *MIUI*|*HyperOS*)
       [ "$oplus" != "1" ] && rom="rom_oem"
-      dtbo="dtbo_oem"
-      ;;
-  esac
-
-  # KernelSU selection
-  select_option "KernelSU Root" "KernelSU" "Default"
-  root_sel="$SELECT_RESULT"
-  case "$root_sel" in
-    *KernelSU*)
-      root="root_ksu"
-      select_option "SUSFS4KSU Support" "Enabled" "Disabled"
-      susfs_sel="$SELECT_RESULT"
-      case "$susfs_sel" in
-        *Enabled*) susfs="susfs" ;;
-        *) susfs="nosusfs" ;;
-      esac
-      ;;
-    *)
-      root="root_noksu"
-      susfs="nosusfs"
+      if [[ "$devicename" == "pipa" ]]; then
+        dtbo="dtbo_oem_pipa"
+      else
+        dtbo="dtbo_oem"
+      fi
       ;;
   esac
 
@@ -123,37 +111,32 @@ configure_auto() {
     cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
       ui_print "--> Miui/HyperOS ROM detected, configuring..."
       rom="rom_oem"
-      dtbo="dtbo_oem"
+      if [[ "$devicename" == "pipa" ]]; then
+        dtbo="dtbo_oem_pipa"
+      else
+        dtbo="dtbo_oem"
+      fi
       ;;
     *)
       if [[ "$oplus" != "1" ]]; then
         ui_print "--> AOSP/CLO ROM detected, configuring..."
         rom="rom_aosp"
+        if [[ "$devicename" == "pipa" ]]; then
+          dtbo="dtbo_def_pipa"
+        else
+          dtbo="dtbo_def"
+        fi
       else
         ui_print "--> Oplus Port ROM detected, configuring..."
+        rom="rom_port"
+        if [[ "$devicename" == "pipa" ]]; then
+          dtbo="dtbo_oem_pipa"
+        else
+          dtbo="dtbo_oem"
+        fi
       fi
-      dtbo="dtbo_def"
       ;;
   esac
-
-  sleep 0.5
-  if [[ "$ZIPFILE" == *ksu* ]] || ([[ -d /data/adb/ksu ]] && [[ -f /data/adb/ksud ]]); then
-    ui_print "--> KernelSU is detected, configuring..."
-    root="root_ksu"
-    sleep 0.5
-    if [[ -d /data/adb/susfs4ksu ]] && [[ -d /data/adb/modules/susfs4ksu ]]; then
-      ui_print "--> SUSFS4KSU is detected, configuring..."
-      susfs="susfs"
-    else
-      ui_print "--> SUSFS4KSU not detected, skipping..."
-      susfs="nosusfs"
-    fi
-  else
-    ui_print "--> KernelSU not detected, skipping..."
-    ui_print "--> SUSFS4KSU also skipped as well..."
-    root="root_noksu"
-    susfs="nosusfs"
-  fi
 
   sleep 0.5
   if [[ "$ZIPFILE" == *effcpu* || "$ZIPFILE" == *EFFCPU* ]]; then
@@ -182,15 +165,39 @@ configure_auto() {
 }
 
 choose_config_mode() {
-  ui_print " " " Select Kernel Configuration :"
+  ui_print "--> Select Kernel Configuration :"
   ui_print "  (Vol +) Manual Configuration "
-  ui_print "  (Vol -) Auto Configuration " " "
-  while true; do
-    ev=$(getevent -lt 2>/dev/null | grep -m1 "KEY_VOLUME.*DOWN")
-    case $ev in
-      *KEY_VOLUMEUP*) configure_manual; break ;;
-      *KEY_VOLUMEDOWN*) configure_auto; break ;;
-    esac
+  ui_print "  (Vol -) Auto Configuration "
+  ui_print "  ! Timeout in 8 seconds, defaults to Auto"
+
+  local timeout=8
+  local start now key_event
+
+  start=$(date +%s)
+
+  while :; do
+    key_event=$(timeout 0.2 getevent -qlc 1 2>/dev/null)
+
+    if [ -n "$key_event" ]; then
+      if echo "$key_event" | grep -q "KEY_VOLUMEUP"; then
+        ui_print "  Selected : Manual Configuration" " "
+        configure_manual
+        return 0
+      fi
+
+      if echo "$key_event" | grep -q "KEY_VOLUMEDOWN"; then
+        ui_print "  Selected : Auto Configuration" " "
+        configure_auto
+        return 0
+      fi
+    fi
+
+    now=$(date +%s)
+    if [ $((now - start)) -ge $timeout ]; then
+      ui_print "  ! Timeout reached" " "
+      configure_auto
+      return 0
+    fi
   done
 }
 
@@ -198,7 +205,7 @@ choose_config_mode() {
 # Install begins here
 # 
 
-devicename=munch;
+devicename=pipa
 case "$devicename" in
   munch|alioth|pipa)
     is_slot_device=1;
@@ -218,7 +225,6 @@ if [[ -f /vendor/OemPorts10T.prop ]] ||
   ui_print " ! Detected OPLUS Port ROM by Dandaa !"
   ui_print " ! Manual Configuration is Recommended !"
   ui_print " Note : Port ROM Usually Need KernelSU Root !"
-  rom="rom_port"
   oplus=1
 else
   oplus=0
@@ -233,38 +239,33 @@ else
   choose_config_mode
 fi
 
-if [[ "$susfs" == "susfs" ]]; then
-  rm -f *-NOSUSFS-Image
-else
-  rm -f *-SUSFS-Image
-fi
-
 mv *-Image $home/Image
 mv *-dtb $home/dtb
 mv *-dtbo.img $home/dtbo.img
 
 dump_boot
 
-ui_print "--> Applying cmdline..."
-ui_print " e404_args=$root,$susfs,$rom,$dtbo,$dtb,$batt"
-patch_cmdline "e404_args" "e404_args=$root,$susfs,$rom,$dtbo,$dtb,$batt"
-
-ui_print "--> Installing... "
+ui_print "--> Applying configuration..."
+ui_print " $rom,$dtbo,$dtb,$batt"
+patch_cmdline "e404_args" "e404_args=$rom,$dtbo,$dtb,$batt"
 
 write_boot
 
 if [[ $is_slot_device == 1 ]]; then
- ui_print "--> Installing to A/B slot... "
+ ui_print "--> Installing to vendor_boot partition... "
   block=/dev/block/bootdevice/by-name/vendor_boot
   ramdisk_compression=auto
   patch_vbmeta_flag=auto
   reset_ak
   dump_boot
   write_boot
+else
+  ui_print "--> Installing to boot partition... "
 fi
 
 if [[ ! -f /vendor/etc/task_profiles.json ]]; then
 	ui_print " " " Note : Uclamp Task Profile Not Found ! " " "
 fi
 
-ui_print " " " --- Install Done ! --- "
+ui_print " " " E404R Kernel @ Project113 "
+ui_print " " " --- Install Complete --- "
