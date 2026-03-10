@@ -205,7 +205,7 @@ choose_config_mode() {
 # Install begins here
 # 
 
-devicename=pipa
+devicename=munch
 case "$devicename" in
   munch|alioth|pipa)
     is_slot_device=1;
