@@ -1,271 +1,63 @@
 # AnyKernel3 Ramdisk Mod Script
 # osm0sis @ xda-developers
-#
-# E404R kernel custom installer by 113
-# What are you looking for ?
 
+## AnyKernel setup
+# begin properties
 properties() { '
-kernel.string=\\ E404R Kernel by Project 113 \\
+kernel.string=
+do.devicecheck=1
 do.modules=0
 do.systemless=1
-'; }
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=munch
+device.name2=munchin
+device.name3=
+device.name4=
+device.name5=
+supported.versions=
+'; } # end properties
 
-devicecheck() {
-  local device devicename match product testname vendordevice vendorproduct;
-  device=$(getprop ro.product.device 2>/dev/null);
-  product=$(getprop ro.build.product 2>/dev/null);
-  vendordevice=$(getprop ro.product.vendor.device 2>/dev/null);
-  vendorproduct=$(getprop ro.vendor.product.device 2>/dev/null);
-  for testname in $(grep 'devicename' anykernel.sh | cut -d= -f2-); do
-    for devicename in $device $product $vendordevice $vendorproduct; do
-      if [[ "$devicename" == *"$testname"* ]]; then
-        match=1
-        break
-      fi
-    done
-  done
-  if [[ ! "$match" ]]; then
-    abort " " " Unsupported device. Aborting...";
-  fi
-}
+# shell variables
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=1;
+ramdisk_compression=auto;
 
-select_option() {
-  ui_print " - $1 :"
-  ui_print "  (Vol +) $2"
-  ui_print "  (Vol -) $3"
 
-  SELECT_RESULT=""
-  while true; do
-    key_event=$(getevent -qlc 1)
-    case "$key_event" in
-      *"KEY_VOLUMEUP"*"DOWN"*|*"KEY_VOLUMEUP"*"1"*)
-        ui_print "  Selected : $2" " "
-        SELECT_RESULT="$2"
-        break
-        ;;
-      *"KEY_VOLUMEDOWN"*"DOWN"*|*"KEY_VOLUMEDOWN"*"1"*)
-        ui_print "  Selected : $3" " "
-        SELECT_RESULT="$3"
-        break
-        ;;
-    esac
-    sleep 0.1
-  done
-  echo "$SELECT_RESULT"
-}
+## AnyKernel methods (DO NOT CHANGE)
+# import patching functions/variables - see for reference
+. tools/ak3-core.sh;
 
-configure_manual() {
-  # ROM selection
-  select_option "ROM/DTBO Type" "AOSP/CLO" "MIUI/HyperOS"
-  rom_sel="$SELECT_RESULT"
-  case "$rom_sel" in
-    *AOSP*|*CLO*)
-      [ "$oplus" != "1" ] && rom="rom_aosp"
-      if [[ "$devicename" == "pipa" ]]; then
-        dtbo="dtbo_def_pipa"
-      else
-        dtbo="dtbo_def"
-      fi
-      ;;
-    *MIUI*|*HyperOS*)
-      [ "$oplus" != "1" ] && rom="rom_oem"
-      if [[ "$devicename" == "pipa" ]]; then
-        dtbo="dtbo_oem_pipa"
-      else
-        dtbo="dtbo_oem"
-      fi
-      ;;
-  esac
 
-  # DTB selection
-  select_option "DTB CPU Frequency" "EFFCPU" "Default"
-  dtb_sel="$SELECT_RESULT"
-  case "$dtb_sel" in
-    *EFFCPU*) dtb="dtb_effcpu" ;;
-    *) dtb="dtb_def" ;;
-  esac
+## AnyKernel file attributes
+# set permissions/ownership for included ramdisk files
+set_perm_recursive 0 0 750 750 $ramdisk/*;
 
-  # Battery profile (Alioth only)
-  if [[ "$devicename" == "alioth" ]]; then
-    select_option "Battery Profile" "5000mAh" "Default"
-    batt_sel="$SELECT_RESULT"
-    case "$batt_sel" in
-      *5000*) batt="batt_5k" ;;
-      *) batt="batt_def" ;;
-    esac
-  else
-    batt="batt_def"
-  fi
 
-  ui_print " Manual configuration done !" " "
-  sleep 0.5
-}
+## AnyKernel install
+dump_boot;
 
-configure_auto() {
-  sleep 0.5
-  miprops="$(file_getprop /vendor/build.prop "ro.vendor.miui.build.region" 2>/dev/null)"
-  if [[ -z "$miprops" ]]; then
-    miprops="$(file_getprop /product/etc/build.prop "ro.miui.build.region" 2>/dev/null)"
-  fi
-  case "$miprops" in
-    cn|in|ru|id|eu|tr|tw|gb|global|mx|jp|kr|lm|cl|mi)
-      ui_print "--> Miui/HyperOS ROM detected, configuring..."
-      rom="rom_oem"
-      if [[ "$devicename" == "pipa" ]]; then
-        dtbo="dtbo_oem_pipa"
-      else
-        dtbo="dtbo_oem"
-      fi
-      ;;
-    *)
-      if [[ "$oplus" != "1" ]]; then
-        ui_print "--> AOSP/CLO ROM detected, configuring..."
-        rom="rom_aosp"
-        if [[ "$devicename" == "pipa" ]]; then
-          dtbo="dtbo_def_pipa"
-        else
-          dtbo="dtbo_def"
-        fi
-      else
-        ui_print "--> Oplus Port ROM detected, configuring..."
-        rom="rom_port"
-        if [[ "$devicename" == "pipa" ]]; then
-          dtbo="dtbo_oem_pipa"
-        else
-          dtbo="dtbo_oem"
-        fi
-      fi
-      ;;
-  esac
+# Begin Ramdisk Changes
 
-  sleep 0.5
-  if [[ "$ZIPFILE" == *effcpu* || "$ZIPFILE" == *EFFCPU* ]]; then
-    ui_print "--> EFFCPUFreq is detected, configuring..."
-    dtb="dtb_effcpu"
-  else
-    ui_print "--> EFFCPUFreq not detected, skipping..."
-    dtb="dtb_def"
-  fi
+# migrate from /overlay to /overlay.d to enable SAR Magisk
+if [ -d $ramdisk/overlay ]; then
+  rm -rf $ramdisk/overlay;
+fi;
 
-  sleep 0.5
-  if [[ "$devicename" == "alioth" ]]; then
-    if [[ "$ZIPFILE" == *5k* || "$ZIPFILE" == *5K* ]]; then
-      ui_print "--> 5K battery profile detected, configuring..."
-      batt="batt_5k"
-    else
-      ui_print "--> Stock Alioth battery profile, configuring..."
-      batt="batt_def"
-    fi
-  else
-    batt="batt_def"
-  fi
+write_boot;
+## end install
 
-  ui_print " " " Auto configuration done !" " "
-  sleep 0.5
-}
+## vendor_boot shell variables
+block=/dev/block/bootdevice/by-name/vendor_boot;
+is_slot_device=1;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
 
-choose_config_mode() {
-  ui_print "--> Select Kernel Configuration :"
-  ui_print "  (Vol +) Manual Configuration "
-  ui_print "  (Vol -) Auto Configuration "
-  ui_print "  ! Timeout in 8 seconds, defaults to Auto"
+# reset for vendor_boot patching
+reset_ak;
 
-  local timeout=8
-  local start now key_event
+# vendor_boot install
+dump_boot;
 
-  start=$(date +%s)
-
-  while :; do
-    key_event=$(timeout 0.2 getevent -qlc 1 2>/dev/null)
-
-    if [ -n "$key_event" ]; then
-      if echo "$key_event" | grep -q "KEY_VOLUMEUP"; then
-        ui_print "  Selected : Manual Configuration" " "
-        configure_manual
-        return 0
-      fi
-
-      if echo "$key_event" | grep -q "KEY_VOLUMEDOWN"; then
-        ui_print "  Selected : Auto Configuration" " "
-        configure_auto
-        return 0
-      fi
-    fi
-
-    now=$(date +%s)
-    if [ $((now - start)) -ge $timeout ]; then
-      ui_print "  ! Timeout reached" " "
-      configure_auto
-      return 0
-    fi
-  done
-}
-
-#
-# Install begins here
-# 
-
-devicename=munch
-case "$devicename" in
-  munch|alioth|pipa)
-    is_slot_device=1;
-  ;;
-  apollo|lmi)
-    is_slot_device=0;
-  ;;
-esac
-block=/dev/block/bootdevice/by-name/boot
-ramdisk_compression=auto
-patch_vbmeta_flag=auto
-
-. tools/ak3-core.sh
-
-if [[ -f /vendor/OemPorts10T.prop ]] ||
-  [[ -f /vendor/etc/init/OemPorts10T.rc ]]; then
-  ui_print " ! Detected OPLUS Port ROM by Dandaa !"
-  ui_print " ! Manual Configuration is Recommended !"
-  ui_print " Note : Port ROM Usually Need KernelSU Root !"
-  oplus=1
-else
-  oplus=0
-  devicecheck
-fi
-
-sleep 0.5
-if [[ "$SIDELOAD" == "1" ]]; then
-  ui_print " " " ! Sideloading Detected, Overriding to Manual Configuration !"
-  configure_manual
-else
-  choose_config_mode
-fi
-
-mv *-Image $home/Image
-mv *-dtb $home/dtb
-mv *-dtbo.img $home/dtbo.img
-
-dump_boot
-
-ui_print "--> Applying configuration..."
-ui_print " $rom,$dtbo,$dtb,$batt"
-patch_cmdline "e404_args" "e404_args=$rom,$dtbo,$dtb,$batt"
-
-write_boot
-
-if [[ $is_slot_device == 1 ]]; then
- ui_print "--> Installing to vendor_boot partition... "
-  block=/dev/block/bootdevice/by-name/vendor_boot
-  ramdisk_compression=auto
-  patch_vbmeta_flag=auto
-  reset_ak
-  dump_boot
-  write_boot
-else
-  ui_print "--> Installing to boot partition... "
-fi
-
-if [[ ! -f /vendor/etc/task_profiles.json ]]; then
-	ui_print " " " Note : Uclamp Task Profile Not Found ! " " "
-fi
-
-ui_print " " " E404R Kernel @ Project113 "
-ui_print " " " --- Install Complete --- "
+write_boot;
+## end vendor_boot install
